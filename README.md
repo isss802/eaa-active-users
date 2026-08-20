@@ -1,34 +1,79 @@
 # eaa-active-users
 
-List users who accessed [Akamai Enterprise Application Access (EAA)](https://techdocs.akamai.com/eaa/docs/welcome-guide) applications within a given time window — for access reviews, license cleanups, and periodic user inventories.
+[English version](README.en.md)
 
-> **Disclaimer**: This is a personal project. It is not affiliated with, endorsed by, or supported by Akamai Technologies. Provided as-is, without warranty of any kind, on a best-effort basis (no SLA).
+[Akamai Enterprise Application Access (EAA)](https://techdocs.akamai.com/eaa/docs/welcome-guide) のアプリケーションに、指定した期間内にアクセスしたユーザーの一覧を出力する CLI ツールです。アクセス棚卸し・ライセンス整理・定期的なユーザーインベントリに使えます。
 
-## Why
+> **免責**: これは個人プロジェクトであり、Akamai Technologies が提供・承認・サポートするものではありません。現状有姿（as-is）・無保証・ベストエフォート（SLA なし）で提供します。
 
-EAA keeps user access logs for 365 days, and the `{OPEN}` API endpoint
-`GET /crux/v1/mgmt-pop/application-reports/ops/query` lets you query them. However, the API **silently caps the number of records returned per call** — the [API reference](https://techdocs.akamai.com/eaa-api/reference/get-application-reports) documents a `limit` maximum of 250, and an effective cap of 500 has been observed in practice (as of August 2026). No error or truncation marker is returned when the cap is hit.
+## なぜ作ったか
 
-Clients that query a long time range in one call therefore miss users without noticing. (The official [cli-eaa](https://github.com/akamai/cli-eaa) `report last_access` command is affected by this as of v0.7.x: it only subdivides the time range when a response reaches 5,000 records, which the server-side cap makes unreachable.)
+EAA はユーザーアクセスログを365日保持しており、{OPEN} API の
+`GET /crux/v1/mgmt-pop/application-reports/ops/query` で照会できます。ところがこの API は **1回のコールで返すレコード数を黙って頭打ちにします**——[API リファレンス](https://techdocs.akamai.com/eaa-api/reference/get-application-reports)上の `limit` 最大値は 250、実際に観測される実効上限は 500（2026年8月時点）。上限に達してもエラーも切り捨てフラグも返りません。
 
-This tool:
+そのため、長い期間を1回のクエリで取ろうとするクライアントは**気づかないままユーザーを取りこぼします**（公式 [cli-eaa](https://github.com/akamai/cli-eaa) の `report last_access` も v0.7.x 時点でこの影響を受けます。レスポンスが5,000件に達したときだけ期間を分割する実装ですが、サーバー側の上限がそれより低いため分割が発動しません）。
 
-- recursively splits the time window until every sub-window fits under the cap, so **no records are silently dropped**,
-- verifies the assumed cap at runtime (one extra split) and auto-corrects if the effective cap is lower,
-- **loudly reports incompleteness** (warning + exit code `3`) in the one case where data is genuinely unreachable (more than *cap* records within a single minute),
-- respects the API rate limit (25 requests/minute) and retries on 429/network errors.
+このツールは：
 
-## Install
+- どのサブ期間も上限未満に収まるまで**期間を再帰的に分割**するので、レコードが黙って落ちません
+- 想定上限を**実行時に自動検証**し（1回だけ検証分割を行う）、実効上限がより低ければ自動補正します
+- データが本当に取得不能なケース（1分間に上限以上のレコードが詰まっている場合）では、**完全性を装わず警告＋終了コード `3`** で明示します
+- API レート制限（25リクエスト/分）を守り、429・ネットワークエラーはリトライします
+
+## インストール
+
+前提は **Python 3.10 以上**だけです。リポジトリを clone する必要はありません。
+
+### 方法1: pipx（推奨・clone 不要）
+
+[pipx](https://pipx.pypa.io/) はツールごとに隔離された環境を作ってくれるので、依存関係で手元の Python を汚しません。
 
 ```console
-pipx install eaa-active-users      # or: pip install eaa-active-users
+# pipx が無ければ（macOS の例）
+brew install pipx
+pipx ensurepath
+
+# GitHub から直接インストール
+pipx install git+https://github.com/isss802/eaa-active-users
 ```
 
-Requires Python 3.10+.
+これで `eaa-active-users` コマンドがそのまま使えます。更新は `pipx upgrade eaa-active-users`、削除は `pipx uninstall eaa-active-users`。
 
-## Credentials
+> このリポジトリがプライベートの間は、GitHub の認証（`gh auth login` 済み、または git の credential helper に GitHub の資格情報がある状態）が必要です。public なら認証不要でそのまま入ります。
 
-Create an `{OPEN}` API client in [Akamai Control Center](https://control.akamai.com/) (Identity and Access Management) with READ-WRITE access to the **Enterprise Application Access** API, then put the credentials in `~/.edgerc` together with your EAA contract ID:
+### 方法2: pip（clone 不要）
+
+venv を自分で管理したい場合：
+
+```console
+python3 -m venv ~/venvs/eaa
+~/venvs/eaa/bin/pip install git+https://github.com/isss802/eaa-active-users
+~/venvs/eaa/bin/eaa-active-users --help
+```
+
+### 方法3: uv（clone 不要・インストールすら不要）
+
+[uv](https://docs.astral.sh/uv/) を使っているなら、一時実行が一番手軽です：
+
+```console
+uvx --from git+https://github.com/isss802/eaa-active-users eaa-active-users --help
+```
+
+### 方法4: clone して開発モード（開発者向け）
+
+```console
+git clone https://github.com/isss802/eaa-active-users
+cd eaa-active-users
+python3 -m venv .venv
+.venv/bin/pip install -e . pytest ruff
+.venv/bin/pytest   # テスト実行
+```
+
+> **注**: PyPI には公開していないため、`pip install eaa-active-users` / `pipx install eaa-active-users`（レジストリ名指定）はまだ使えません。
+
+## 認証情報の準備
+
+[Akamai Control Center](https://control.akamai.com/) の **Identity and Access Management** で API クライアントを作成し、サービス「**Enterprise Application Access**」に READ-WRITE でアクセスできるようにします。発行されたクレデンシャルを、EAA の契約 ID（`contract_id`）と一緒に `~/.edgerc` に書きます：
 
 ```ini
 [default]
@@ -39,23 +84,24 @@ access_token = akab-xxxxxxxxxxxxxxxx-xxxxxxxxxxxxxxxx
 contract_id = A-XXXXXXX
 ```
 
-`contract_id` is shown in Enterprise Center, or can be listed via the [Contracts API](https://techdocs.akamai.com/eaa-api/reference/get-contracts).
+- `contract_id` は Enterprise Center の画面、または [Contracts API](https://techdocs.akamai.com/eaa-api/reference/get-contracts) で確認できます。
+- 複数テナントを扱う場合はセクションを分けて `--section セクション名` で切り替えます。
 
-## Usage
+## 使い方
 
 ```console
-# Users active in the last 90 days (default), as CSV on stdout
+# 直近90日（デフォルト）のアクティブユーザーを CSV で標準出力へ
 eaa-active-users
 
-# Last 30 days, JSON, from a specific .edgerc section
+# 直近30日、JSON 形式、.edgerc の別セクションを使用
 eaa-active-users --days 30 --format json --section my-tenant
 
-# Explicit window, filtered to one application/IdP, saved to a file
+# 期間を明示し、特定アプリ/IdP に絞り、ファイルに保存
 eaa-active-users --start 2026-05-01T00:00:00Z --end 2026-08-01T00:00:00Z \
     --app login.example.com -o active-users.csv
 ```
 
-Output (CSV):
+出力（CSV）：
 
 ```csv
 userid,records,first_access_iso8601,last_access_iso8601
@@ -63,35 +109,57 @@ alice@example.com,128,2026-05-03T10:00:00Z,2026-07-30T15:30:00Z
 bob,4,2026-06-15T08:00:00Z,2026-06-18T12:00:00Z
 ```
 
-- `userid` is the API's `uid` field. It is usually the user's email address, but non-email values (e.g. Cloud Directory usernames) also occur.
-- Unauthenticated hits (`anon-user`: internet scans, health checks) are **excluded by default**; the excluded count is printed to stderr. Use `--include-anonymous` to keep them.
+- `userid` は API の `uid` フィールドです。通常はメールアドレスですが、メール形式でない値（Cloud Directory のユーザー名など）も返ります。
+- 未認証アクセス（`anon-user`：インターネットからのスキャンやヘルスチェック）は**デフォルトで除外**され、除外件数が stderr に表示されます。含めたい場合は `--include-anonymous`。
 
-Exit codes: `0` success · `1` usage/credentials error · `2` API error before any data · `3` **completed but INCOMPLETE** (see below).
+### 主なオプション
 
-## Limitations
+| オプション | 説明 |
+|---|---|
+| `--days N` | 遡る日数（デフォルト 90。`--start` 指定時は無視） |
+| `--start` / `--end` | 期間の明示指定（epoch 秒 or ISO 8601。`--end` 省略時は現在） |
+| `--section` | `~/.edgerc` のセクション（デフォルト `default`） |
+| `--edgerc` | `.edgerc` のパス（デフォルト `~/.edgerc`） |
+| `--app` | アプリケーション/IdP のホスト名または UUID で絞り込み |
+| `--format csv\|json` | 出力形式（デフォルト csv） |
+| `-o ファイル` | ファイルへ出力（デフォルトは標準出力） |
+| `--include-anonymous` | `anon-user`（未認証アクセス）を出力に含める |
+| `--cap N` | 分割判定に使う1コールあたり上限の想定値（デフォルト 250。低いほど安全・高いほど速い） |
+| `--verbose` | 全ウィンドウの取得ログを stderr に出す |
 
-- **The per-call record cap is undocumented behavior.** The default assumption (`--cap 250`) matches the documented `limit` maximum and is verified at runtime, but Akamai may change this behavior at any time.
-- If more than *cap* records fall within a single minute, records beyond the cap in that minute cannot be retrieved through this endpoint. The tool warns and exits with code `3` instead of pretending completeness.
-- EAA log retention is 365 days; windows older than that return nothing.
-- The output contains personal data (usernames). Handle result files accordingly.
-- API rate limit is 25 requests/minute; large tenants with long windows take time (the tool paces itself at ~24 requests/minute).
+### 終了コード
 
-## Development
+| コード | 意味 |
+|---|---|
+| `0` | 成功（完全なデータ） |
+| `1` | 使い方・認証情報のエラー |
+| `2` | データ取得前の API エラー |
+| `3` | **完了したが不完全**（下記「制限事項」参照。stderr に警告が出ます） |
+
+## 制限事項
+
+- **1コールあたりのレコード上限は非文書化の挙動です。** デフォルトの想定値（`--cap 250`）はドキュメント記載の `limit` 最大値に合わせており実行時に検証もされますが、Akamai がこの挙動をいつ変えてもおかしくありません。
+- 1分間（最小分割幅）に上限以上のレコードが詰まっている場合、その1分の超過分はこのエンドポイントからは取得できません。ツールは完全なふりをせず、警告と終了コード `3` で知らせます。
+- EAA のログ保持は365日です。それより古い期間は何も返りません。
+- 出力には個人データ（ユーザー名）が含まれます。結果ファイルの取り扱いに注意してください。
+- API レート制限は25リクエスト/分です。大規模テナント×長期間は時間がかかります（ツール側は約24リクエスト/分に自制します）。
+
+## 開発
 
 ```console
-uv sync           # or: pip install -e . --group dev
+uv sync           # または: pip install -e . --group dev
 pytest
 ruff check .
 ```
 
-## Acknowledgments
+## 謝辞
 
-The window-splitting approach was inspired by reading the [cli-eaa](https://github.com/akamai/cli-eaa) source (Apache-2.0). This project contains no code copied from cli-eaa.
+期間分割のアプローチは [cli-eaa](https://github.com/akamai/cli-eaa)（Apache-2.0）のソースを読んで着想を得ました。cli-eaa からのコードのコピーは含まれていません。
 
-## Maintenance policy
+## メンテナンス方針
 
-Best-effort, no SLA. If the underlying API behavior is fixed/documented upstream (or cli-eaa's `report last_access` handles the cap correctly), this repository will be deprecated and archived in favor of the official tooling.
+ベストエフォート・SLA なしです。上流で API の挙動が修正・文書化された場合（または cli-eaa の `report last_access` が上限を正しく扱うようになった場合）、このリポジトリは公式ツール推奨に切り替えて deprecated → アーカイブします。
 
-## License
+## ライセンス
 
 [Apache-2.0](LICENSE)
