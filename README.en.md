@@ -72,6 +72,16 @@ The inverse report for license cleanups: enumerates **every** directory in the t
 eaa-active-users --report unused --days 90 -o unused-review.csv
 ```
 
+Output (CSV):
+
+```csv
+directory,username,email,display_name,created_at,verdict,match_confidence,matched_userid,access_count,first_access,last_access
+Corp-AD,csuzuki,csuzuki@example.co.jp,Chika Suzuki,2023-04-01T09:00:00,unused_candidate,,,,,
+Corp-AD,tsato,tsato@example.co.jp,Taro Sato,2022-10-15T09:00:00,needs_review,weak:email-localpart,tsato@example.com,12,2026-06-01T01:00:00Z,2026-08-15T09:00:00Z
+Cloud Directory,alice@example.com,alice@example.com,Alice,2021-01-20T09:00:00,active,exact:username,alice@example.com,128,2026-05-22T00:30:00Z,2026-08-18T08:45:00Z
+,,,,,active_unmatched,,olduser@example.com,3,2026-05-25T02:00:00Z,2026-05-26T00:00:00Z
+```
+
 Each row carries a `verdict`: `unused_candidate` (no EAA app-access record in the window — a candidate, **not proof of non-use**), `needs_review` (weak match only: username equals the local part of an active email uid — decide manually), `active` (exact field match, with the matching field in `match_confidence`), or `active_unmatched` (an active uid that matched no directory user — catches deleted users and spelling drift). Matching is case-insensitive over `username`, `email`, and AD-normalized attributes (`user.email`, `user.userPrincipleName`, `user.samAccountName`, …).
 
 > **Do not deactivate `unused_candidate` rows mechanically.** Access events counted by this report include IdP (login portal) sign-ins as well as access to web, custom-domain, and tunnel-type client-access applications; `unused_candidate` means none of these were recorded in the window. Identity matching is not perfect — review `needs_review` (weak-match rows) and `active_unmatched` (active uids found in no directory) before acting.

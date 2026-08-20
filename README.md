@@ -122,7 +122,18 @@ alice@example.com,128,2026-05-03T19:00:00+09:00,2026-07-31T00:30:00+09:00
 eaa-active-users --report unused --days 90 --tz Asia/Tokyo -o unused-review.csv
 ```
 
-出力は登録ユーザー全員＋突合結果の一覧で、`verdict` 列でフィルタして使います：
+出力（CSV）：
+
+```csv
+directory,username,email,display_name,created_at,verdict,match_confidence,matched_userid,access_count,first_access,last_access
+Corp-AD,csuzuki,csuzuki@example.co.jp,Chika Suzuki,2023-04-01T09:00:00,unused_candidate,,,,,
+Corp-AD,tsato,tsato@example.co.jp,Taro Sato,2022-10-15T09:00:00,needs_review,weak:email-localpart,tsato@example.com,12,2026-06-01T10:00:00+09:00,2026-08-15T18:00:00+09:00
+Cloud Directory,alice@example.com,alice@example.com,Alice,2021-01-20T09:00:00,active,exact:username,alice@example.com,128,2026-05-22T09:30:00+09:00,2026-08-18T17:45:00+09:00
+Corp-AD,byamada,,Bunta Yamada,2020-06-01T09:00:00,active,exact:user.userPrincipleName,byamada@corp.example.co.jp,34,2026-07-01T08:50:00+09:00,2026-08-10T12:00:00+09:00
+,,,,,active_unmatched,,olduser@example.com,3,2026-05-25T11:00:00+09:00,2026-05-26T09:00:00+09:00
+```
+
+登録ユーザー全員＋突合結果の一覧が出るので、`verdict` 列でフィルタして使います：
 
 | verdict | 意味 |
 |---|---|
