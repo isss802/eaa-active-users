@@ -94,6 +94,7 @@ Each row carries a `verdict`: `unused_candidate` (no EAA app-access record in th
 
 - **The per-call record cap is undocumented behavior.** The default assumption (`--cap 250`) matches the documented `limit` maximum and is verified at runtime, but Akamai may change this behavior at any time.
 - If more than *cap* records fall within a single minute, records beyond the cap in that minute cannot be retrieved through this endpoint. The tool warns and exits with code `3` instead of pretending completeness.
+- Exhaustive coverage of application types recorded by this endpoint is not documented officially.
 - EAA log retention is 365 days; windows older than that return nothing.
 - The output contains personal data (usernames). Handle result files accordingly.
 - API rate limit is 25 requests/minute; large tenants with long windows take time (the tool paces itself at ~24 requests/minute).
