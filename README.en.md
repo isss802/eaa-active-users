@@ -78,6 +78,18 @@ Columns:
 
 Exit codes: `0` success · `1` usage/credentials error · `2` API error before any data · `3` **completed but INCOMPLETE** (see below).
 
+## Unused-user review (`--report unused`)
+
+The inverse report for license cleanups: enumerates **every** directory in the tenant (Cloud Directory, Active Directory, LDAP), fetches all registered users, and diffs them against the active list.
+
+```console
+eaa-active-users --report unused --days 90 -o unused-review.csv
+```
+
+Each row carries a `verdict`: `unused_candidate` (no EAA app-access record in the window — a candidate, **not proof of non-use**), `needs_review` (weak match only: username equals the local part of an active email uid — decide manually), `active` (exact field match, with the matching field in `match_confidence`), or `active_unmatched` (an active uid that matched no directory user — catches deleted users and spelling drift). Matching is case-insensitive over `username`, `email`, and AD-normalized attributes (`user.email`, `user.userPrincipleName`, `user.samAccountName`, …).
+
+> **Do not deactivate `unused_candidate` rows mechanically.** Users who only signed in to the IdP portal without opening an app are likely absent from app-access logs, log coverage per app type is not fully guaranteed by documentation, and identity matching can miss. Always have a human review the result.
+
 ## Limitations
 
 - **The per-call record cap is undocumented behavior.** The default assumption (`--cap 250`) matches the documented `limit` maximum and is verified at runtime, but Akamai may change this behavior at any time.
@@ -104,4 +116,4 @@ Best-effort, no SLA. If the underlying API behavior is fixed/documented upstream
 
 ## License
 
-[Apache-2.0](LICENSE)
+[MIT](LICENSE)

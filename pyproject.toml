@@ -4,10 +4,10 @@ build-backend = "hatchling.build"
 
 [project]
 name = "eaa-active-users"
-version = "0.2.0"
+version = "0.3.0"
 description = "List users who accessed Akamai Enterprise Application Access (EAA) in a given time window, without silent truncation"
 readme = "README.md"
-license = "Apache-2.0"
+license = "MIT"
 requires-python = ">=3.10"
 authors = [{ name = "isss802" }]
 keywords = ["akamai", "eaa", "zero-trust", "audit", "access-log"]

@@ -24,6 +24,7 @@ import io
 import json
 import sys
 import time
+import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -35,7 +36,7 @@ try:
 except ImportError:  # pragma: no cover
     ZoneInfo = None
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 #: Records-per-call cap the splitter assumes. The API reference documents a
 #: maximum ``limit`` of 250; the effective cap observed in practice is 500.
@@ -76,7 +77,7 @@ class ApiClient:
 
     def __init__(self, host: str, auth: EdgeGridAuth, contract_id: str,
                  tz: str, app: str | None, cap: int, verbose: bool = False):
-        self.base = f"https://{host}/crux/v1/mgmt-pop/application-reports/ops/query"
+        self.host = host
         self.session = requests.Session()
         self.session.auth = auth
         self.contract_id = contract_id
@@ -88,22 +89,13 @@ class ApiClient:
         self.verbose = verbose
         self.api_calls = 0
 
-    def query(self, start_ms: int, end_ms: int) -> list[dict]:
-        params = {
-            "start": start_ms,
-            "end": end_ms,
-            "tz": self.tz,
-            "limit": self.limit,
-            "contractId": self.contract_id,
-        }
-        if self.app:
-            params["app"] = self.app
-
+    def get_json(self, path: str, params: dict) -> dict:
+        url = f"https://{self.host}/crux/v1/{path}"
         rate_limit_retries = 0
         network_retries = 0
         while True:
             try:
-                resp = self.session.get(self.base, params=params, timeout=60)
+                resp = self.session.get(url, params=params, timeout=60)
             except (requests.ConnectionError, requests.Timeout) as exc:
                 network_retries += 1
                 if network_retries > MAX_NETWORK_RETRIES:
@@ -124,9 +116,42 @@ class ApiClient:
                 continue
             if resp.status_code != 200:
                 raise FatalApiError(
-                    f"HTTP {resp.status_code} for window {start_ms}-{end_ms}: "
-                    f"{resp.text[:200]}")
-            return resp.json().get("data", [])
+                    f"HTTP {resp.status_code} for {path}: {resp.text[:200]}")
+            return resp.json()
+
+    def query(self, start_ms: int, end_ms: int) -> list[dict]:
+        params = {
+            "start": start_ms,
+            "end": end_ms,
+            "tz": self.tz,
+            "limit": self.limit,
+            "contractId": self.contract_id,
+        }
+        if self.app:
+            params["app"] = self.app
+        return self.get_json("mgmt-pop/application-reports/ops/query",
+                             params).get("data", [])
+
+    def paged_objects(self, path: str, delay_s: float = INTER_CALL_DELAY_S):
+        """Iterate a collection endpoint following meta.next pagination."""
+        params = {"contractId": self.contract_id, "limit": 100}
+        while True:
+            body = self.get_json(path, params)
+            yield from body.get("objects", [])
+            nxt = (body.get("meta") or {}).get("next")
+            if not nxt:
+                return
+            params = dict(urllib.parse.parse_qsl(nxt))
+            params.setdefault("contractId", self.contract_id)
+            if delay_s:
+                time.sleep(delay_s)
+
+    def directories(self) -> list[dict]:
+        return list(self.paged_objects("mgmt-pop/directories"))
+
+    def directory_users(self, directory_id: str) -> list[dict]:
+        return list(self.paged_objects(
+            f"mgmt-pop/directories/{directory_id}/users"))
 
 
 #: A final window returning at least this many records triggers a one-time
@@ -266,6 +291,119 @@ def render_json(users: dict[str, dict], *, start_ms: int, end_ms: int,
     }, indent=2)
 
 
+#: Directory-user fields whose value may equal an active `uid`, in match order.
+DIR_MATCH_FIELDS = ("username", "email")
+NORM_MATCH_FIELDS = ("user.email", "user.userName", "user.userPrincipleName",
+                     "user.samAccountName", "eaa.userName")
+
+
+def match_candidates(dir_user: dict):
+    """Yield (field, value) pairs usable to match a directory user to an active uid."""
+    for f in DIR_MATCH_FIELDS:
+        v = dir_user.get(f)
+        if v:
+            yield f, str(v)
+    norm = dir_user.get("normalized_attributes") or {}
+    for f in NORM_MATCH_FIELDS:
+        v = norm.get(f)
+        if v:
+            yield f, str(v)
+
+
+def classify_users(dir_entries: list[tuple[str, dict]],
+                   active_users: dict[str, dict]) -> tuple[list[dict], set[str]]:
+    """Match directory users against active uids.
+
+    dir_entries: (directory_name, user_object) pairs.
+    Returns (rows, matched_uids). Each row carries a verdict:
+      - active           — a field matches an active uid exactly (case-insensitive)
+      - needs_review     — only a weak match (username == local part of an active
+                           email uid); a human should decide
+      - unused_candidate — no match; candidate for cleanup, NOT proof of non-use
+    """
+    active_lc = {uid.lower(): uid for uid in active_users}
+    email_localparts = {uid.split("@", 1)[0].lower(): uid
+                        for uid in active_users if "@" in uid}
+    rows: list[dict] = []
+    matched: set[str] = set()
+    for dname, du in dir_entries:
+        verdict, conf, muid = "unused_candidate", "", ""
+        for field, val in match_candidates(du):
+            hit = active_lc.get(val.lower())
+            if hit:
+                verdict, conf, muid = "active", f"exact:{field}", hit
+                matched.add(hit)
+                break
+        if verdict == "unused_candidate":
+            uname = str(du.get("username") or "").lower()
+            hit = email_localparts.get(uname) if uname else None
+            if hit:
+                verdict, conf, muid = "needs_review", "weak:email-localpart", hit
+                matched.add(hit)
+        rows.append({
+            "directory": dname,
+            "username": du.get("username") or "",
+            "email": du.get("email")
+                     or (du.get("normalized_attributes") or {}).get("user.email")
+                     or "",
+            "display_name": du.get("display_name") or "",
+            "created_at": du.get("created_at") or "",
+            "verdict": verdict,
+            "match_confidence": conf,
+            "matched_userid": muid,
+        })
+    return rows, matched
+
+
+VERDICT_ORDER = {"unused_candidate": 0, "needs_review": 1,
+                 "active": 2, "active_unmatched": 3}
+
+
+UNUSED_COLUMNS = ["directory", "username", "email", "display_name", "created_at",
+                  "verdict", "match_confidence", "matched_userid",
+                  "access_count", "first_access", "last_access"]
+
+
+def build_unused_rows(rows: list[dict], active_users: dict[str, dict],
+                      matched: set[str], tzinfo=timezone.utc) -> list[dict]:
+    """Enrich diff rows with access stats. Unmatched active uids are appended
+    as active_unmatched rows so no active identity silently disappears."""
+    all_rows = [dict(r) for r in rows]
+    for uid in sorted(set(active_users) - matched):
+        all_rows.append({
+            "directory": "", "username": "", "email": "", "display_name": "",
+            "created_at": "", "verdict": "active_unmatched",
+            "match_confidence": "", "matched_userid": uid,
+        })
+    for r in all_rows:
+        u = active_users.get(r["matched_userid"])
+        r["access_count"] = u["records"] if u else ""
+        r["first_access"] = iso(u["first"], tzinfo) if u else ""
+        r["last_access"] = iso(u["last"], tzinfo) if u else ""
+    all_rows.sort(key=lambda r: (VERDICT_ORDER.get(r["verdict"], 9),
+                                 r["directory"], r["username"]))
+    return all_rows
+
+
+def render_unused_csv(all_rows: list[dict]) -> str:
+    buf = io.StringIO()
+    w = csv.writer(buf, lineterminator="\n")
+    w.writerow(UNUSED_COLUMNS)
+    for r in all_rows:
+        w.writerow([r[c] for c in UNUSED_COLUMNS])
+    return buf.getvalue()
+
+
+def render_unused_json(all_rows: list[dict], *, start_ms: int, end_ms: int,
+                       complete: bool, tzinfo=timezone.utc) -> str:
+    return json.dumps({
+        "start": iso(start_ms, tzinfo),
+        "end": iso(end_ms, tzinfo),
+        "complete": complete,
+        "rows": [{c: r[c] for c in UNUSED_COLUMNS} for r in all_rows],
+    }, indent=2)
+
+
 def parse_when(value: str) -> int:
     """Parse an epoch-seconds integer or an ISO 8601 datetime into epoch ms."""
     try:
@@ -282,6 +420,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="eaa-active-users",
         description="List users who accessed Akamai EAA in a given time window.")
+    p.add_argument("--report", choices=["active", "unused"], default="active",
+                   help="active: users who accessed EAA in the window (default). "
+                        "unused: diff every directory user against the active "
+                        "list and report unused candidates")
     p.add_argument("--days", type=float, default=90,
                    help="look-back window in days (default: 90); "
                         "ignored when --start is given")
@@ -369,11 +511,11 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_API_ERROR
 
     anonymous_excluded = 0
-    if not args.include_anonymous:
+    if not args.include_anonymous or args.report == "unused":
         before = len(records)
         records = [r for r in records if r.get("uid") != ANON_USER]
         anonymous_excluded = before - len(records)
-        if anonymous_excluded:
+        if anonymous_excluded and args.report == "active":
             log(f"note: excluded {anonymous_excluded} unauthenticated "
                 f"('{ANON_USER}') records; use --include-anonymous to keep them")
 
@@ -382,9 +524,35 @@ def main(argv: list[str] | None = None) -> int:
         f"{client.api_calls} API calls"
         + ("" if complete else " — INCOMPLETE"))
 
-    out = render_csv(users, tzinfo) if args.format == "csv" else render_json(
-        users, start_ms=start_ms, end_ms=end_ms, complete=complete,
-        anonymous_excluded=anonymous_excluded, tzinfo=tzinfo)
+    if args.report == "unused":
+        try:
+            dir_entries: list[tuple[str, dict]] = []
+            for d in client.directories():
+                dname = d.get("name") or d.get("uuid_url") or "?"
+                dir_users = client.directory_users(d.get("uuid_url"))
+                log(f"directory '{dname}': {len(dir_users)} users")
+                dir_entries.extend((dname, du) for du in dir_users)
+        except FatalApiError as exc:
+            print(f"error: fetching directory users failed: {exc}",
+                  file=sys.stderr)
+            return EXIT_API_ERROR
+        rows, matched = classify_users(dir_entries, users)
+        all_rows = build_unused_rows(rows, users, matched, tzinfo)
+        counts = {}
+        for r in all_rows:
+            counts[r["verdict"]] = counts.get(r["verdict"], 0) + 1
+        log("summary: " + ", ".join(f"{k}={v}" for k, v in sorted(counts.items()))
+            + ("" if complete else " — INCOMPLETE: unused verdicts unreliable"))
+        log("note: 'unused_candidate' means no access via EAA app logs in the "
+            "window — NOT proof of non-use. Review needs_review rows and see "
+            "the README's limitations before acting.")
+        out = render_unused_csv(all_rows) if args.format == "csv" else \
+            render_unused_json(all_rows, start_ms=start_ms, end_ms=end_ms,
+                               complete=complete, tzinfo=tzinfo)
+    else:
+        out = render_csv(users, tzinfo) if args.format == "csv" else render_json(
+            users, start_ms=start_ms, end_ms=end_ms, complete=complete,
+            anonymous_excluded=anonymous_excluded, tzinfo=tzinfo)
     if args.output:
         Path(args.output).write_text(out, encoding="utf-8")
     else:

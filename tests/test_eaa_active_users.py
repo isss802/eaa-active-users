@@ -7,9 +7,12 @@ from eaa_active_users import (
     MIN_WINDOW_MS,
     FatalApiError,
     aggregate,
+    build_unused_rows,
+    classify_users,
     collect,
     parse_when,
     render_csv,
+    render_unused_csv,
 )
 
 
@@ -115,6 +118,58 @@ def test_timestamps_render_in_requested_timezone():
     assert "2026-01-01T00:00:00Z" in out_utc
     out_jst = render_csv(users, ZoneInfo("Asia/Tokyo"))
     assert "2026-01-01T09:00:00+09:00" in out_jst
+
+
+def test_classify_users_matching_tiers():
+    active = aggregate([
+        rec("alice@example.com", 1000),
+        rec("abe", 2000),
+        rec("ghost@x.com", 3000),
+        rec("stray@nowhere.io", 4000),
+    ])
+    dir_entries = [
+        # exact email match, case-insensitive
+        ("CloudDir", {"username": "alice", "email": "Alice@Example.com"}),
+        # exact username match; AD user matched via top-level username
+        ("AD", {"username": "abe",
+                "normalized_attributes": {"user.userPrincipleName": "abe@corp.local"}}),
+        # weak: username equals local part of an active email uid
+        ("AD", {"username": "ghost"}),
+        # no match at all
+        ("AD", {"username": "bob", "email": "bob@example.com"}),
+    ]
+    rows, matched = classify_users(dir_entries, active)
+    v = {(r["directory"], r["username"]): r for r in rows}
+    assert v[("CloudDir", "alice")]["verdict"] == "active"
+    assert v[("CloudDir", "alice")]["match_confidence"] == "exact:email"
+    assert v[("AD", "abe")]["verdict"] == "active"
+    assert v[("AD", "ghost")]["verdict"] == "needs_review"
+    assert v[("AD", "ghost")]["matched_userid"] == "ghost@x.com"
+    assert v[("AD", "bob")]["verdict"] == "unused_candidate"
+    assert matched == {"alice@example.com", "abe", "ghost@x.com"}
+
+    all_rows = build_unused_rows(rows, active, matched)
+    # the stray active uid must not disappear from the report
+    stray = [r for r in all_rows if r["verdict"] == "active_unmatched"]
+    assert len(stray) == 1 and stray[0]["matched_userid"] == "stray@nowhere.io"
+    # unused candidates sort first, and matched rows carry access stats
+    assert all_rows[0]["verdict"] == "unused_candidate"
+    alice = next(r for r in all_rows if r["username"] == "alice")
+    assert alice["access_count"] == 1 and alice["last_access"].endswith("Z")
+    out = render_unused_csv(all_rows)
+    assert out.splitlines()[0].startswith("directory,username,email")
+    assert len(out.splitlines()) == 1 + 5
+
+
+def test_matching_uses_normalized_attributes():
+    active = aggregate([rec("TARO.YAMADA@corp.example.jp", 1000)])
+    dir_entries = [("AD", {
+        "username": "yamadataro",
+        "normalized_attributes": {"user.userPrincipleName": "taro.yamada@corp.example.jp"},
+    })]
+    rows, _matched = classify_users(dir_entries, active)
+    assert rows[0]["verdict"] == "active"
+    assert rows[0]["match_confidence"] == "exact:user.userPrincipleName"
 
 
 def test_parse_when_accepts_epoch_and_iso():

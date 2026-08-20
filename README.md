@@ -128,10 +128,32 @@ alice@example.com,128,2026-05-03T19:00:00+09:00,2026-07-31T00:30:00+09:00
 - 日時は ISO 8601 形式です。デフォルトは UTC（末尾 `Z`）、`--tz` を指定するとそのタイムゾーンのオフセット付き（例 `+09:00`）で表示されます。
 - 未認証アクセス（`anon-user`：インターネットからのスキャンやヘルスチェック）は**デフォルトで除外**され、除外件数が stderr に表示されます。含めたい場合は `--include-anonymous`。
 
+## 未使用ユーザーの棚卸し（`--report unused`）
+
+アクティブ一覧の「逆」——**ディレクトリに登録されているのに期間内にアクセスが無いユーザー**を洗い出します。テナントの全ディレクトリ（Cloud Directory / Active Directory / LDAP すべて）を列挙し、全登録ユーザーをアクティブ一覧と突合します。
+
+```console
+eaa-active-users --report unused --days 90 --tz Asia/Tokyo -o unused-review.csv
+```
+
+出力は登録ユーザー全員＋突合結果の一覧で、`verdict` 列でフィルタして使います：
+
+| verdict | 意味 |
+|---|---|
+| `unused_candidate` | 期間内に EAA アプリアクセスの記録が無い＝**削除候補（ただし証明ではない。下記の注意参照）** |
+| `needs_review` | 弱い一致（username がアクティブ側メールアドレスのローカル部と一致）のみ。**人が判断する行** |
+| `active` | アクティブ一覧とフィールドが完全一致（`match_confidence` 列に `exact:email` 等の一致根拠） |
+| `active_unmatched` | アクティブ一覧にいるのに、どのディレクトリユーザーとも一致しなかった ID（削除済みユーザーや表記ゆれの検知用） |
+
+突合は `username` / `email` に加え、AD 連携で入る正規化属性（`user.email`、`user.userPrincipleName`、`user.samAccountName` 等）も大文字小文字を無視して照合します。
+
+> **⚠️ `unused_candidate` を機械的に削除しないでください。** この判定は「EAA のアプリアクセスログに記録が無い」ことだけを意味します。既知の限界が3つあります——①IdP（ログインポータル）にログインしただけでアプリを開かなかった利用者は載らない可能性が高い、②アプリアクセスログの種別カバレッジはドキュメントで完全保証されていない、③名寄せに失敗した実利用者が紛れうる（その検知用が `needs_review` と `active_unmatched`）。ログインのみの利用者は、公式 CLI で生ログのログインイベントを突き合わせて確認できます：`akamai eaa log access -s <epoch> -e <epoch> --json | jq -r 'select(.username != "-") | .username' | sort -u`（要 [cli-eaa](https://github.com/akamai/cli-eaa) と Legacy API キー）。最終判断は必ず人が行ってください。
+
 ### 主なオプション
 
 | オプション | 説明 |
 |---|---|
+| `--report active\|unused` | active＝アクティブユーザー一覧（デフォルト）／unused＝ディレクトリ全ユーザーとの突合（未使用候補の洗い出し） |
 | `--days N` | 遡る日数（デフォルト 90。`--start` 指定時は無視） |
 | `--start` / `--end` | 期間の明示指定（epoch 秒 or ISO 8601。`--end` 省略時は現在） |
 | `--section` | `~/.edgerc` のセクション（デフォルト `default`） |
@@ -179,4 +201,4 @@ ruff check .
 
 ## ライセンス
 
-[Apache-2.0](LICENSE)
+[MIT](LICENSE)
