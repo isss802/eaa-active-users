@@ -1,0 +1,39 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "eaa-active-users"
+version = "0.1.0"
+description = "List users who accessed Akamai Enterprise Application Access (EAA) in a given time window, without silent truncation"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.10"
+authors = [{ name = "isss802" }]
+keywords = ["akamai", "eaa", "zero-trust", "audit", "access-log"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: System Administrators",
+    "Programming Language :: Python :: 3",
+    "Topic :: Security",
+]
+dependencies = [
+    "requests>=2.31",
+    "edgegrid-python>=1.3",
+]
+
+[project.urls]
+Homepage = "https://github.com/isss802/eaa-active-users"
+
+[project.scripts]
+eaa-active-users = "eaa_active_users:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
