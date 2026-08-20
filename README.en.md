@@ -2,23 +2,9 @@
 
 [日本語版 README](README.md)
 
-List users who accessed [Akamai Enterprise Application Access (EAA)](https://techdocs.akamai.com/eaa/docs/welcome-guide) applications within a given time window — for access reviews, license cleanups, and periodic user inventories.
+List users who accessed [Akamai Enterprise Application Access (EAA)](https://techdocs.akamai.com/eaa/docs/welcome-guide) applications within a given time window — for access reviews, license cleanups, and periodic user inventories. The time window is split automatically so that the API's per-call record cap cannot silently drop records (see [Notes on API behavior](#notes-on-api-behavior)).
 
 > **Disclaimer**: This is a personal project. It is not affiliated with, endorsed by, or supported by Akamai Technologies. Provided as-is, without warranty of any kind, on a best-effort basis (no SLA).
-
-## Why
-
-EAA keeps user access logs for 365 days, and the `{OPEN}` API endpoint
-`GET /crux/v1/mgmt-pop/application-reports/ops/query` lets you query them. However, the API **silently caps the number of records returned per call** — the [API reference](https://techdocs.akamai.com/eaa-api/reference/get-application-reports) documents a `limit` maximum of 250, and an effective cap of 500 has been observed in practice (as of August 2026). No error or truncation marker is returned when the cap is hit.
-
-Clients that query a long time range in one call therefore miss users without noticing. (The official [cli-eaa](https://github.com/akamai/cli-eaa) `report last_access` command is affected by this as of v0.7.x: it only subdivides the time range when a response reaches 5,000 records, which the server-side cap makes unreachable.)
-
-This tool:
-
-- recursively splits the time window until every sub-window fits under the cap, so **no records are silently dropped**,
-- verifies the assumed cap at runtime (one extra split) and auto-corrects if the effective cap is lower,
-- **loudly reports incompleteness** (warning + exit code `3`) in the one case where data is genuinely unreachable (more than *cap* records within a single minute),
-- respects the API rate limit (25 requests/minute) and retries on 429/network errors.
 
 ## Install
 
@@ -98,6 +84,12 @@ Each row carries a `verdict`: `unused_candidate` (no EAA app-access record in th
 - EAA log retention is 365 days; windows older than that return nothing.
 - The output contains personal data (usernames). Handle result files accordingly.
 - API rate limit is 25 requests/minute; large tenants with long windows take time (the tool paces itself at ~24 requests/minute).
+
+## Notes on API behavior
+
+- `GET /crux/v1/mgmt-pop/application-reports/ops/query` caps the number of records returned per call. The [API reference](https://techdocs.akamai.com/eaa-api/reference/get-application-reports) documents a `limit` maximum of 250; an effective cap of 500 has been observed (as of August 2026). No error or truncation marker is returned when the cap is hit.
+- This tool handles the cap by recursive window splitting with a one-time runtime cap verification, reports unreachable data via exit code `3`, and retries on 429/network errors.
+- The official [cli-eaa](https://github.com/akamai/cli-eaa) `report last_access` (v0.7.x) subdivides the time range only when a response reaches 5,000 records, and is therefore affected by this cap.
 
 ## Development
 

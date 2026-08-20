@@ -2,23 +2,9 @@
 
 [English version](README.en.md)
 
-[Akamai Enterprise Application Access (EAA)](https://techdocs.akamai.com/eaa/docs/welcome-guide) のアプリケーションに、指定した期間内にアクセスしたユーザーの一覧を出力する CLI ツールです。アクセス棚卸し・ライセンス整理・定期的なユーザーインベントリに使えます。
+[Akamai Enterprise Application Access (EAA)](https://techdocs.akamai.com/eaa/docs/welcome-guide) のアプリケーションに、指定した期間内にアクセスしたユーザーの一覧を出力する CLI ツールです。アクセス棚卸し・ライセンス整理・定期的なユーザーインベントリに使えます。API の1コールあたりレコード上限による取りこぼしが起きないよう、期間を自動分割して全量を取得します（[補足](#補足api-の挙動に関する事実)参照）。
 
 > **免責**: これは個人プロジェクトであり、Akamai Technologies が提供・承認・サポートするものではありません。現状有姿（as-is）・無保証・ベストエフォート（SLA なし）で提供します。
-
-## なぜ作ったか
-
-EAA はユーザーアクセスログを365日保持しており、{OPEN} API の
-`GET /crux/v1/mgmt-pop/application-reports/ops/query` で照会できます。ところがこの API は **1回のコールで返すレコード数を黙って頭打ちにします**——[API リファレンス](https://techdocs.akamai.com/eaa-api/reference/get-application-reports)上の `limit` 最大値は 250、実際に観測される実効上限は 500（2026年8月時点）。上限に達してもエラーも切り捨てフラグも返りません。
-
-そのため、長い期間を1回のクエリで取ろうとするクライアントは**気づかないままユーザーを取りこぼします**（公式 [cli-eaa](https://github.com/akamai/cli-eaa) の `report last_access` も v0.7.x 時点でこの影響を受けます。レスポンスが5,000件に達したときだけ期間を分割する実装ですが、サーバー側の上限がそれより低いため分割が発動しません）。
-
-このツールは：
-
-- どのサブ期間も上限未満に収まるまで**期間を再帰的に分割**するので、レコードが黙って落ちません
-- 想定上限を**実行時に自動検証**し（1回だけ検証分割を行う）、実効上限がより低ければ自動補正します
-- データが本当に取得不能なケース（1分間に上限以上のレコードが詰まっている場合）では、**完全性を装わず警告＋終了コード `3`** で明示します
-- API レート制限（25リクエスト/分）を守り、429・ネットワークエラーはリトライします
 
 ## インストール
 
@@ -187,6 +173,13 @@ eaa-active-users --report unused --days 90 --tz Asia/Tokyo -o unused-review.csv
 - EAA のログ保持は365日です。それより古い期間は何も返りません。
 - 出力には個人データ（ユーザー名）が含まれます。結果ファイルの取り扱いに注意してください。
 - API レート制限は25リクエスト/分です。大規模テナント×長期間は時間がかかります（ツール側は約24リクエスト/分に自制します）。
+
+## 補足：API の挙動に関する事実
+
+- `GET /crux/v1/mgmt-pop/application-reports/ops/query` が1コールで返すレコード数には上限がある。[API リファレンス](https://techdocs.akamai.com/eaa-api/reference/get-application-reports)上の `limit` 最大値は 250。実効上限として 500 が観測されている（2026年8月時点）。
+- 上限に達してもエラーや切り捨てを示すフラグは返らない。
+- 本ツールは期間の再帰分割と実行時の上限検証（1回の検証分割）でこれに対応し、取得しきれない場合は終了コード `3` で明示する。429・ネットワークエラーはリトライする。
+- 公式 [cli-eaa](https://github.com/akamai/cli-eaa) の `report last_access`（v0.7.x）は、レスポンスが5,000件に達した場合のみ期間を分割する実装のため、この上限の影響を受ける。
 
 ## 開発
 
