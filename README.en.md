@@ -88,7 +88,7 @@ eaa-active-users --report unused --days 90 -o unused-review.csv
 
 Each row carries a `verdict`: `unused_candidate` (no EAA app-access record in the window — a candidate, **not proof of non-use**), `needs_review` (weak match only: username equals the local part of an active email uid — decide manually), `active` (exact field match, with the matching field in `match_confidence`), or `active_unmatched` (an active uid that matched no directory user — catches deleted users and spelling drift). Matching is case-insensitive over `username`, `email`, and AD-normalized attributes (`user.email`, `user.userPrincipleName`, `user.samAccountName`, …).
 
-> **Do not deactivate `unused_candidate` rows mechanically.** Note that users who only signed in to the IdP portal without opening an app **are recorded** — verified empirically (2026-08) on a multi-directory tenant, where a login-only user appeared in this report with an exact record-count and timestamp match; web apps, custom domains, and tunnel-type client access were likewise confirmed. Remaining caveats: per-app-type coverage is not exhaustively guaranteed by documentation (though the major types above were verified), and identity matching can miss — that is what `needs_review` and `active_unmatched` are for. Always have a human review the result.
+> **Do not deactivate `unused_candidate` rows mechanically.** Access events counted by this report include IdP (login portal) sign-ins as well as access to web, custom-domain, and tunnel-type client-access applications; `unused_candidate` means none of these were recorded in the window. Identity matching is not perfect — review `needs_review` (weak-match rows) and `active_unmatched` (active uids found in no directory) before acting.
 
 ## Limitations
 
