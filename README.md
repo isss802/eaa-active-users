@@ -121,7 +121,7 @@ alice@example.com,128,2026-05-03T19:00:00+09:00,2026-07-31T00:30:00+09:00
 | 列 | 意味 |
 |---|---|
 | `userid` | ユーザーの識別子（API の `uid`）。通常はメールアドレスですが、メール形式でない値（Cloud Directory のユーザー名など）も返ります |
-| `access_count` | 指定期間内にそのユーザーのアクセスログが記録された件数（＝アクセスイベント数。活動量の目安） |
+| `access_count` | 指定期間内にそのユーザーのアクセスログが記録された件数。**IdP ログインとアプリアクセスの両方**がイベントとして数えられます（HTTP リクエスト数とは一致しません）。活動量の目安 |
 | `first_access` | **指定期間内で**最初にアクセスした日時 |
 | `last_access` | **指定期間内で**最後にアクセスした日時（棚卸しの本命。「最後に使ったのはいつか」） |
 
@@ -147,7 +147,11 @@ eaa-active-users --report unused --days 90 --tz Asia/Tokyo -o unused-review.csv
 
 突合は `username` / `email` に加え、AD 連携で入る正規化属性（`user.email`、`user.userPrincipleName`、`user.samAccountName` 等）も大文字小文字を無視して照合します。
 
-> **⚠️ `unused_candidate` を機械的に削除しないでください。** この判定は「EAA のアプリアクセスログに記録が無い」ことだけを意味します。既知の限界が3つあります——①IdP（ログインポータル）にログインしただけでアプリを開かなかった利用者は載らない可能性が高い、②アプリアクセスログの種別カバレッジはドキュメントで完全保証されていない、③名寄せに失敗した実利用者が紛れうる（その検知用が `needs_review` と `active_unmatched`）。ログインのみの利用者は、公式 CLI で生ログのログインイベントを突き合わせて確認できます：`akamai eaa log access -s <epoch> -e <epoch> --json | jq -r 'select(.username != "-") | .username' | sort -u`（要 [cli-eaa](https://github.com/akamai/cli-eaa) と Legacy API キー）。最終判断は必ず人が行ってください。
+> **⚠️ `unused_candidate` を機械的に削除しないでください。** この判定は「期間内に EAA のアクセスログに記録が無い」ことを意味します。
+>
+> なお「IdP（ログインポータル）にログインしただけの利用者が漏れるのではないか」という懸念は**実測で否定済み**です——IdP ログインイベントもこのレポートに記録されることを、期間中ログインのみだった実ユーザーがレコード件数・時刻とも完全一致で出現することにより確認しています（2026-08、複数ディレクトリ構成のテナントで検証。あわせて Web アプリ／カスタムドメイン／トンネル型クライアントアクセスの記録も実測確認済み）。
+>
+> 残る注意は2点です：①アプリ種別ごとの記録範囲は公式ドキュメント上は網羅保証の明記がない（上記のとおり主要種別は実測で確認済み）、②名寄せに失敗した実利用者が紛れうる（その検知用が `needs_review` と `active_unmatched` です）。独立した裏取りが要る場合は公式 CLI の生ログと突き合わせできます：`akamai eaa log access -s <epoch> -e <epoch> --json | jq -r 'select(.username != "-") | .username' | sort -u`（要 [cli-eaa](https://github.com/akamai/cli-eaa) と Legacy API キー）。最終判断は必ず人が行ってください。
 
 ### 主なオプション
 
