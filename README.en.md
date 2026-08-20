@@ -64,12 +64,16 @@ eaa-active-users --start 2026-05-01T00:00:00Z --end 2026-08-01T00:00:00Z \
 Output (CSV):
 
 ```csv
-userid,records,first_access_iso8601,last_access_iso8601
+userid,access_count,first_access,last_access
 alice@example.com,128,2026-05-03T10:00:00Z,2026-07-30T15:30:00Z
 bob,4,2026-06-15T08:00:00Z,2026-06-18T12:00:00Z
 ```
 
-- `userid` is the API's `uid` field. It is usually the user's email address, but non-email values (e.g. Cloud Directory usernames) also occur.
+Columns:
+
+- `userid` — the API's `uid` field. Usually the user's email address, but non-email values (e.g. Cloud Directory usernames) also occur.
+- `access_count` — number of access-log events recorded for the user within the window (activity volume).
+- `first_access` / `last_access` — first and last access timestamps **within the requested window**, in ISO 8601. UTC (`Z` suffix) by default; with `--tz Asia/Tokyo` timestamps are rendered in that timezone with an offset (e.g. `+09:00`).
 - Unauthenticated hits (`anon-user`: internet scans, health checks) are **excluded by default**; the excluded count is printed to stderr. Use `--include-anonymous` to keep them.
 
 Exit codes: `0` success · `1` usage/credentials error · `2` API error before any data · `3` **completed but INCOMPLETE** (see below).

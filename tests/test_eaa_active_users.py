@@ -106,6 +106,17 @@ def test_csv_escapes_commas_in_userid():
     assert len(rows) == 2
 
 
+def test_timestamps_render_in_requested_timezone():
+    from zoneinfo import ZoneInfo
+
+    users = aggregate([rec("a", 1_767_225_600_000)])  # 2026-01-01T00:00:00Z
+    out_utc = render_csv(users)
+    assert out_utc.splitlines()[0] == "userid,access_count,first_access,last_access"
+    assert "2026-01-01T00:00:00Z" in out_utc
+    out_jst = render_csv(users, ZoneInfo("Asia/Tokyo"))
+    assert "2026-01-01T09:00:00+09:00" in out_jst
+
+
 def test_parse_when_accepts_epoch_and_iso():
     assert parse_when("1700000000") == 1_700_000_000_000
     assert parse_when("2026-01-01T00:00:00+00:00") == 1_767_225_600_000

@@ -30,7 +30,12 @@ from pathlib import Path
 import requests
 from akamai.edgegrid import EdgeGridAuth
 
-__version__ = "0.1.0"
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:  # pragma: no cover
+    ZoneInfo = None
+
+__version__ = "0.2.0"
 
 #: Records-per-call cap the splitter assumes. The API reference documents a
 #: maximum ``limit`` of 250; the effective cap observed in practice is 500.
@@ -227,31 +232,34 @@ def aggregate(records: list[dict]) -> dict[str, dict]:
     return users
 
 
-def iso(ms: int) -> str:
-    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime(
-        "%Y-%m-%dT%H:%M:%SZ")
+def iso(ms: int, tzinfo=timezone.utc) -> str:
+    """Render epoch ms as ISO 8601 in the given timezone; UTC uses the Z suffix."""
+    s = datetime.fromtimestamp(ms / 1000, tz=tzinfo).isoformat(timespec="seconds")
+    return s.replace("+00:00", "Z")
 
 
-def render_csv(users: dict[str, dict]) -> str:
+def render_csv(users: dict[str, dict], tzinfo=timezone.utc) -> str:
     buf = io.StringIO()
     w = csv.writer(buf, lineterminator="\n")
-    w.writerow(["userid", "records", "first_access_iso8601", "last_access_iso8601"])
+    w.writerow(["userid", "access_count", "first_access", "last_access"])
     for uid in sorted(users, key=lambda u: users[u]["last"], reverse=True):
         u = users[uid]
-        w.writerow([uid, u["records"], iso(u["first"]), iso(u["last"])])
+        w.writerow([uid, u["records"], iso(u["first"], tzinfo), iso(u["last"], tzinfo)])
     return buf.getvalue()
 
 
 def render_json(users: dict[str, dict], *, start_ms: int, end_ms: int,
-                complete: bool, anonymous_excluded: int) -> str:
+                complete: bool, anonymous_excluded: int,
+                tzinfo=timezone.utc) -> str:
     return json.dumps({
-        "start": iso(start_ms),
-        "end": iso(end_ms),
+        "start": iso(start_ms, tzinfo),
+        "end": iso(end_ms, tzinfo),
         "complete": complete,
         "anonymous_records_excluded": anonymous_excluded,
         "users": [
-            {"userid": uid, "records": u["records"],
-             "first_access": iso(u["first"]), "last_access": iso(u["last"])}
+            {"userid": uid, "access_count": u["records"],
+             "first_access": iso(u["first"], tzinfo),
+             "last_access": iso(u["last"], tzinfo)}
             for uid, u in sorted(users.items(),
                                  key=lambda kv: kv[1]["last"], reverse=True)
         ],
@@ -287,7 +295,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help=".edgerc section to use (default: default)")
     p.add_argument("--app", help="filter by application/IdP hostname or UUID")
     p.add_argument("--tz", default="UTC",
-                   help="tz database timezone passed to the API (default: UTC)")
+                   help="tz database timezone (e.g. Asia/Tokyo). Used both for "
+                        "the API query and for rendering output timestamps "
+                        "(default: UTC)")
     p.add_argument("--cap", type=int, default=DEFAULT_CAP,
                    help="records-per-call cap the splitter assumes "
                         f"(default: {DEFAULT_CAP}; lower is safer, higher is faster)")
@@ -305,6 +315,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+
+    if args.tz == "UTC":
+        tzinfo = timezone.utc
+    else:
+        try:
+            tzinfo = ZoneInfo(args.tz)
+        except (KeyError, ValueError, OSError):
+            print(f"error: unknown timezone: {args.tz}", file=sys.stderr)
+            return EXIT_USAGE
 
     now_ms = int(time.time() * 1000)
     end_ms = args.end if args.end is not None else now_ms
@@ -340,7 +359,7 @@ def main(argv: list[str] | None = None) -> int:
         contract_id=sec["contract_id"],
         tz=args.tz, app=args.app, cap=args.cap, verbose=args.verbose)
 
-    log(f"scanning {iso(start_ms)} .. {iso(end_ms)} "
+    log(f"scanning {iso(start_ms, tzinfo)} .. {iso(end_ms, tzinfo)} "
         f"(cap {args.cap}, section [{args.section}])")
     try:
         records, complete = collect(client.query, start_ms, end_ms, args.cap,
@@ -363,9 +382,9 @@ def main(argv: list[str] | None = None) -> int:
         f"{client.api_calls} API calls"
         + ("" if complete else " — INCOMPLETE"))
 
-    out = render_csv(users) if args.format == "csv" else render_json(
+    out = render_csv(users, tzinfo) if args.format == "csv" else render_json(
         users, start_ms=start_ms, end_ms=end_ms, complete=complete,
-        anonymous_excluded=anonymous_excluded)
+        anonymous_excluded=anonymous_excluded, tzinfo=tzinfo)
     if args.output:
         Path(args.output).write_text(out, encoding="utf-8")
     else:

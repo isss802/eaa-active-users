@@ -104,12 +104,28 @@ eaa-active-users --start 2026-05-01T00:00:00Z --end 2026-08-01T00:00:00Z \
 出力（CSV）：
 
 ```csv
-userid,records,first_access_iso8601,last_access_iso8601
+userid,access_count,first_access,last_access
 alice@example.com,128,2026-05-03T10:00:00Z,2026-07-30T15:30:00Z
 bob,4,2026-06-15T08:00:00Z,2026-06-18T12:00:00Z
 ```
 
-- `userid` は API の `uid` フィールドです。通常はメールアドレスですが、メール形式でない値（Cloud Directory のユーザー名など）も返ります。
+`--tz Asia/Tokyo` を付けると日時が日本時間（オフセット付き）で出ます：
+
+```csv
+userid,access_count,first_access,last_access
+alice@example.com,128,2026-05-03T19:00:00+09:00,2026-07-31T00:30:00+09:00
+```
+
+### 出力項目の説明
+
+| 列 | 意味 |
+|---|---|
+| `userid` | ユーザーの識別子（API の `uid`）。通常はメールアドレスですが、メール形式でない値（Cloud Directory のユーザー名など）も返ります |
+| `access_count` | 指定期間内にそのユーザーのアクセスログが記録された件数（＝アクセスイベント数。活動量の目安） |
+| `first_access` | **指定期間内で**最初にアクセスした日時 |
+| `last_access` | **指定期間内で**最後にアクセスした日時（棚卸しの本命。「最後に使ったのはいつか」） |
+
+- 日時は ISO 8601 形式です。デフォルトは UTC（末尾 `Z`）、`--tz` を指定するとそのタイムゾーンのオフセット付き（例 `+09:00`）で表示されます。
 - 未認証アクセス（`anon-user`：インターネットからのスキャンやヘルスチェック）は**デフォルトで除外**され、除外件数が stderr に表示されます。含めたい場合は `--include-anonymous`。
 
 ### 主なオプション
@@ -121,6 +137,7 @@ bob,4,2026-06-15T08:00:00Z,2026-06-18T12:00:00Z
 | `--section` | `~/.edgerc` のセクション（デフォルト `default`） |
 | `--edgerc` | `.edgerc` のパス（デフォルト `~/.edgerc`） |
 | `--app` | アプリケーション/IdP のホスト名または UUID で絞り込み |
+| `--tz` | タイムゾーン（例 `Asia/Tokyo`）。API クエリと**出力日時の表示**の両方に使う（デフォルト UTC） |
 | `--format csv\|json` | 出力形式（デフォルト csv） |
 | `-o ファイル` | ファイルへ出力（デフォルトは標準出力） |
 | `--include-anonymous` | `anon-user`（未認証アクセス）を出力に含める |
